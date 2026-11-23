@@ -1,0 +1,27 @@
+{
+  "name": "extension",
+  "version": "1.0.0",
+  "description": "Tiện ích mở rộng (Chrome Extension - Manifest V3) hỗ trợ Quản trị viên và Kiểm duyệt viên phát hiện nhanh các bài viết spam, nick ảo, link lừa đảo, số điện thoại telesale trên các Hội nhóm (Facebook Groups), kèm theo chế độ **Tự động lướt thông minh (Auto-Scroll)**.",
+  "main": "content.js",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build && node scripts/build-extension.mjs",
+    "start": "next start",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "next": "^16.4.6",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.3.7",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "typescript": "^7.0.2"
+  }
+}
