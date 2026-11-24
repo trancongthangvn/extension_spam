@@ -28,7 +28,8 @@ export default function PopupPage() {
   const [detectedCount, setDetectedCount] = useState(0);
   const [isScrolling, setIsScrolling] = useState(false);
   const [isInteracting, setIsInteracting] = useState(false);
-  const [interactionCount, setInteractionCount] = useState(0);
+  const [likedCount, setLikedCount] = useState(0);
+  const [commentedCount, setCommentedCount] = useState(0);
   const [interactionDiagnostic, setInteractionDiagnostic] = useState('');
 
   const settingsRef = useRef<ExtensionSettings>(DEFAULT_SETTINGS);
@@ -39,7 +40,12 @@ export default function PopupPage() {
     if (typeof res.count === 'number') setDetectedCount(res.count);
     if (typeof res.isScrolling === 'boolean') setIsScrolling(res.isScrolling);
     if (typeof res.isInteracting === 'boolean') setIsInteracting(res.isInteracting);
-    if (typeof res.interactionCount === 'number') setInteractionCount(res.interactionCount);
+    if (typeof res.likedCount === 'number') {
+      setLikedCount(res.likedCount);
+    } else if (typeof res.interactionCount === 'number') {
+      setLikedCount(res.interactionCount);
+    }
+    if (typeof res.commentedCount === 'number') setCommentedCount(res.commentedCount);
     if (typeof res.interactionDiagnostic === 'string') {
       setInteractionDiagnostic(res.interactionDiagnostic);
     }
@@ -143,7 +149,11 @@ export default function PopupPage() {
       alert('Vui lòng mở một tab Facebook để sử dụng tính năng tự lướt!');
       return;
     }
-    const res = await sendActiveTabMessage({ action: 'TOGGLE_SCROLL' });
+    await storageSet(settingsRef.current as unknown as Record<string, unknown>);
+    const res = await sendActiveTabMessage({
+      action: 'TOGGLE_SCROLL',
+      settings: settingsRef.current,
+    });
     applyTabStats(res);
   }, [applyTabStats]);
 
@@ -170,21 +180,6 @@ export default function PopupPage() {
     },
     [applyTabStats, persistAndNotify]
   );
-
-  const handleToggleInteract = useCallback(async () => {
-    const next = settingsRef.current.autoInteractEnabled
-      ? settingsRef.current
-      : { ...settingsRef.current, autoInteractEnabled: true };
-    if (next !== settingsRef.current) {
-      setSettings(next);
-    }
-    await storageSet(next as unknown as Record<string, unknown>);
-    const res = await sendActiveTabMessage({
-      action: 'TOGGLE_INTERACT',
-      settings: next,
-    });
-    applyTabStats(res);
-  }, [applyTabStats]);
 
   const handleClearLeads = useCallback(async () => {
     setLeads([]);
@@ -237,13 +232,13 @@ export default function PopupPage() {
           settings={settings}
           isScrolling={isScrolling}
           isInteracting={isInteracting}
-          interactionCount={interactionCount}
+          likedCount={likedCount}
+          commentedCount={commentedCount}
           interactionDiagnostic={interactionDiagnostic}
           onUpdateSettings={handleUpdateSettings}
           onToggleScroll={handleToggleScroll}
           onSetSpeed={handleSetSpeed}
           onToggleAutoInteract={handleToggleAutoInteract}
-          onToggleInteract={handleToggleInteract}
         />
       )}
 

@@ -7,26 +7,26 @@ interface InteractTabProps {
   settings: ExtensionSettings;
   isScrolling: boolean;
   isInteracting: boolean;
-  interactionCount: number;
+  likedCount: number;
+  commentedCount: number;
   interactionDiagnostic: string;
   onUpdateSettings: (patch: Partial<ExtensionSettings>, immediate?: boolean) => void;
   onToggleScroll: () => void;
   onSetSpeed: (speed: number) => void;
   onToggleAutoInteract: (checked: boolean) => void;
-  onToggleInteract: () => void;
 }
 
 export function InteractTab({
   settings,
   isScrolling,
   isInteracting,
-  interactionCount,
+  likedCount,
+  commentedCount,
   interactionDiagnostic,
   onUpdateSettings,
   onToggleScroll,
   onSetSpeed,
   onToggleAutoInteract,
-  onToggleInteract,
 }: InteractTabProps) {
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const modeMenuRef = useRef<HTMLDivElement>(null);
@@ -48,10 +48,8 @@ export function InteractTab({
       : '🎲 Random ngẫu nhiên';
 
   const statusText = isInteracting
-    ? `Đang chạy • ${interactionCount} bài${interactionDiagnostic ? ` • ${interactionDiagnostic}` : ''}`
-    : interactionCount
-      ? `Đang dừng • Đã tương tác ${interactionCount} bài${interactionDiagnostic ? ` • ${interactionDiagnostic}` : ''}`
-      : interactionDiagnostic || 'Đang dừng';
+    ? interactionDiagnostic || 'Đang chạy...'
+    : interactionDiagnostic || 'Đang dừng';
 
   return (
     <div id="tab-interact" className="tab-content active">
@@ -64,9 +62,31 @@ export function InteractTab({
         >
           <span id="scrollPopupIcon">{isScrolling ? '⏸' : '▶'}</span>
           <span id="scrollPopupText">
-            {isScrolling ? 'Tạm dừng lướt Facebook' : 'Bắt đầu Tự lướt Facebook ngay'}
+            {isScrolling ? 'Tạm dừng' : 'Bắt đầu'}
           </span>
         </button>
+
+        <div
+          id="interactionStatusPopup"
+          className="card"
+          style={{
+            marginTop: 8,
+            padding: '7px 10px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
+            fontSize: 11,
+            color: 'var(--text-secondary)',
+          }}
+        >
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {statusText}
+          </span>
+          <span style={{ whiteSpace: 'nowrap', fontWeight: 600, color: 'var(--text-primary)', flexShrink: 0 }}>
+            👍 {likedCount} &nbsp;|&nbsp; 💬 {commentedCount}
+          </span>
+        </div>
       </section>
 
       {/* Auto-Scroll Configuration */}
@@ -310,21 +330,6 @@ export function InteractTab({
               });
             }}
           />
-        </div>
-
-        <button
-          id="btnToggleInteractPopup"
-          className={`btn ${isInteracting ? 'btn-secondary' : 'btn-primary'}`}
-          style={{ width: '100%', marginTop: 10 }}
-          onClick={onToggleInteract}
-        >
-          {isInteracting ? 'Dừng Like & Comment' : 'Bắt đầu Like & Comment'}
-        </button>
-        <div
-          id="interactionStatusPopup"
-          style={{ marginTop: 6, fontSize: 11, color: 'var(--text-secondary)' }}
-        >
-          {statusText}
         </div>
       </section>
 

@@ -25,6 +25,17 @@ export interface CapturedLead {
   url: string;
 }
 
+export interface InteractionHistoryItem {
+  id: string;
+  author: string;
+  content: string;
+  url: string;
+  liked: boolean;
+  commented: boolean;
+  commentText?: string;
+  timestamp: string;
+}
+
 export interface ExtensionSettings {
   enabled: boolean;
   showScroller: boolean;
@@ -53,6 +64,8 @@ export interface TabStatsResponse {
   isScrolling?: boolean;
   isInteracting?: boolean;
   interactionCount?: number;
+  likedCount?: number;
+  commentedCount?: number;
   interactionDiagnostic?: string;
 }
 

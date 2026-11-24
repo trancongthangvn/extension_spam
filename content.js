@@ -42,7 +42,9 @@
   let isInteractingBusy = false;
   let interactionTimer = null;
   let interactionCount = 0;
+  let commentCount = 0;
   let processedInteractionCards = new WeakSet();
+  const commentedCards = new WeakSet();
   const commentedPostKeys = new Set();
   let interactionDiagnostic = 'Chưa quét bài';
   let commentSeqIndex = 0;
@@ -212,33 +214,34 @@
       config = { ...config, ...message.settings };
       rescanAll();
       setupOrUpdateScrollWidget();
-      sendResponse({ count: flaggedElements.size, isScrolling, isInteracting, interactionCount, interactionDiagnostic });
+      sendResponse({ count: flaggedElements.size, isScrolling, isInteracting, interactionCount, likedCount: interactionCount, commentedCount: commentCount, interactionDiagnostic });
     } else if (message.action === 'RESCAN') {
       if (message.settings) config = { ...config, ...message.settings };
       rescanAll();
       setupOrUpdateScrollWidget();
-      sendResponse({ count: flaggedElements.size, isScrolling, isInteracting, interactionCount, interactionDiagnostic });
+      sendResponse({ count: flaggedElements.size, isScrolling, isInteracting, interactionCount, likedCount: interactionCount, commentedCount: commentCount, interactionDiagnostic });
     } else if (message.action === 'GET_STATS') {
-      sendResponse({ count: flaggedElements.size, isScrolling, isInteracting, interactionCount, interactionDiagnostic });
+      sendResponse({ count: flaggedElements.size, isScrolling, isInteracting, interactionCount, likedCount: interactionCount, commentedCount: commentCount, interactionDiagnostic });
     } else if (message.action === 'TOGGLE_SCROLL') {
+      if (message.settings) config = { ...config, ...message.settings };
       toggleScrolling();
-      sendResponse({ isScrolling, isInteracting, interactionCount, interactionDiagnostic });
+      sendResponse({ isScrolling, isInteracting, interactionCount, likedCount: interactionCount, commentedCount: commentCount, interactionDiagnostic });
     } else if (message.action === 'START_SCROLL') {
       startScrolling();
-      sendResponse({ isScrolling: true, isInteracting, interactionCount, interactionDiagnostic });
+      sendResponse({ isScrolling: true, isInteracting, interactionCount, likedCount: interactionCount, commentedCount: commentCount, interactionDiagnostic });
     } else if (message.action === 'STOP_SCROLL') {
       stopScrolling();
-      sendResponse({ isScrolling: false, isInteracting, interactionCount, interactionDiagnostic });
+      sendResponse({ isScrolling: false, isInteracting, interactionCount, likedCount: interactionCount, commentedCount: commentCount, interactionDiagnostic });
     } else if (message.action === 'TOGGLE_INTERACT') {
       if (message.settings) config = { ...config, ...message.settings };
       toggleInteraction();
-      sendResponse({ isInteracting, interactionCount, interactionDiagnostic });
+      sendResponse({ isInteracting, interactionCount, likedCount: interactionCount, commentedCount: commentCount, interactionDiagnostic });
     } else if (message.action === 'START_INTERACT') {
       startInteraction();
-      sendResponse({ isInteracting: true, interactionCount, interactionDiagnostic });
+      sendResponse({ isInteracting: true, interactionCount, likedCount: interactionCount, commentedCount: commentCount, interactionDiagnostic });
     } else if (message.action === 'STOP_INTERACT') {
       stopInteraction();
-      sendResponse({ isInteracting: false, interactionCount, interactionDiagnostic });
+      sendResponse({ isInteracting: false, interactionCount, likedCount: interactionCount, commentedCount: commentCount, interactionDiagnostic });
     } else if (message.action === 'SET_SPEED') {
       if (message.speed) {
         scrollSpeedLevel = message.speed;
@@ -1096,7 +1099,8 @@
   }
 
   async function submitComment(textbox, card) {
-    if (!textbox) return false;
+    if (!textbox || textbox.dataset.fbSubmitted === 'true') return false;
+    textbox.dataset.fbSubmitted = 'true';
 
     const composer = textbox.closest('form') ||
       textbox.closest('[role="presentation"]') ||
@@ -1122,7 +1126,8 @@
           const aria = normalizeText(b.getAttribute('aria-label') || '');
           if (/viết bình luận|leave a comment/i.test(aria)) continue;
           if (b.offsetParent !== null && b.getBoundingClientRect().width > 0) {
-            simulateClick(b);
+            // Single native click() only — avoid mousedown/mouseup double-triggering Facebook Comet Pressable
+            b.click();
             clickedButton = true;
             break;
           }
@@ -1132,14 +1137,11 @@
     }
 
     if (clickedButton) {
-      await sleep(350);
-      const stillHasText = (textbox.textContent || '').trim().length > 0;
-      if (!stillHasText || !textbox.isConnected) {
-        return true;
-      }
+      await sleep(250);
+      return true;
     }
 
-    // Fallback Enter key sequence ONLY if submit button wasn't clicked or didn't clear the box
+    // Fallback Enter key sequence ONLY if no Send button was found
     await sleep(120);
     textbox.focus({ preventScroll: true });
 
@@ -1157,7 +1159,6 @@
     };
 
     textbox.dispatchEvent(new KeyboardEvent('keydown', keyConfig));
-    textbox.dispatchEvent(new KeyboardEvent('keypress', keyConfig));
     await sleep(60);
     textbox.dispatchEvent(new KeyboardEvent('keyup', keyConfig));
 
@@ -1940,6 +1941,9 @@
 
     // Feature 5: Check if already liked -> Do not comment again!
     const isAlreadyLiked = isLikeButtonActive(likeBtn);
+    let didLikeNow = false;
+    let didCommentNow = false;
+    let postedCommentText = '';
 
     if (isAlreadyLiked) {
       if (config.skipAlreadyLiked) {
@@ -1957,6 +1961,7 @@
         innerTarget.click?.();
         await sleep(250);
       }
+      didLikeNow = true;
       interactionCount++;
       interactionDiagnostic = `Đã Like bài #${interactionCount}`;
       showToast(`👍 Đã Like bài #${interactionCount}`);
@@ -1972,11 +1977,17 @@
       }
     }
 
-    // Feature 1 & 2: Comment each post ONCE using chosen template (deduped by post key)
+    // Feature 1 & 2: Comment each post ONCE using chosen template (strictly deduped by card + URL + content)
     const commentText = getNextCommentTemplate();
-    const postCommentKey = (getPostUrlFromCard(card, likeBtn) || normalizeText((card?.textContent || '').slice(0, 120)));
-    if (commentText && (!postCommentKey || !commentedPostKeys.has(postCommentKey))) {
-      if (postCommentKey) commentedPostKeys.add(postCommentKey);
+    const commentUrlKey = getPostUrlFromCard(card, likeBtn);
+    const commentTextKey = normalizeText((card?.querySelector('div[dir="auto"], [data-ad-preview="message"]')?.textContent || card?.textContent || '').slice(0, 100));
+    const alreadyCommented = (card && commentedCards.has(card)) ||
+      (commentUrlKey && commentedPostKeys.has(commentUrlKey)) ||
+      (commentTextKey && commentedPostKeys.has(commentTextKey));
+    if (commentText && !alreadyCommented) {
+      if (card) commentedCards.add(card);
+      if (commentUrlKey) commentedPostKeys.add(commentUrlKey);
+      if (commentTextKey) commentedPostKeys.add(commentTextKey);
       await sleep(350);
 
       let textbox = findCommentTextbox(card, likeBtn);
@@ -1994,8 +2005,11 @@
         if (typed) {
           await sleep(400);
           await submitComment(textbox, card);
-          interactionDiagnostic = `Đã comment bài #${interactionCount || 1}`;
-          showToast(`💬 Đã bình luận bài #${interactionCount || 1}`);
+          didCommentNow = true;
+          commentCount++;
+          postedCommentText = commentText;
+          interactionDiagnostic = `Đã tương tác bài #${commentCount}`;
+          showToast(`💬 Đã tương tác bài #${commentCount}`);
 
           // If comment opened in a post modal dialog, close it so scrolling can continue cleanly
           const openedDialog = textbox.closest('div[role="dialog"]');
@@ -2013,6 +2027,46 @@
         interactionDiagnostic = `Không mở được ô bình luận (bài có thể đã tắt bình luận)`;
         console.log('[FB Sentinel] Không mở được ô comment:', card);
       }
+    }
+
+    // Save to interactionHistory in storage so user can view all Liked/Commented posts in popup
+    if ((didLikeNow || didCommentNow) && isContextValid()) {
+      try {
+        const postRoot = (card && card !== document.body) ? (findEnclosingPostCard(card) || card) : null;
+        const authorEl = postRoot?.querySelector('[data-ad-rendering-role="profile_name"], h2 a, h3 a, h4 a, strong a');
+        const rawAuthor = authorEl ? (authorEl.textContent || '').split('\n')[0].trim() : '';
+        const author = (rawAuthor && !/có thể là hình ảnh/i.test(rawAuthor)) ? rawAuthor : 'Thành viên FB';
+
+        const textEls = postRoot ? postRoot.querySelectorAll('div[dir="auto"], span[dir="auto"], [data-ad-preview="message"]') : [];
+        let snippet = '';
+        textEls.forEach(el => {
+          if (el.closest('.fb-spam-scroll-widget, .fb-spam-alert-badge')) return;
+          const t = (el.textContent || '').trim();
+          if (t && !snippet.includes(t)) snippet += (snippet ? ' ' : '') + t;
+        });
+        snippet = snippet.slice(0, 220).trim();
+
+        const postUrl = getPostUrlFromCard(card, likeBtn) || '';
+        chrome.storage.local.get({ interactionHistory: [] }, (data) => {
+          if (!isContextValid()) return;
+          const hist = Array.isArray(data.interactionHistory) ? data.interactionHistory : [];
+          const exists = hist.some(h => (postUrl && h.url === postUrl) || (snippet && h.content === snippet));
+          if (!exists) {
+            hist.unshift({
+              id: Date.now() + Math.random().toString(36).substring(2, 6),
+              author,
+              content: snippet,
+              url: postUrl,
+              liked: didLikeNow,
+              commented: didCommentNow,
+              commentText: postedCommentText,
+              timestamp: new Date().toLocaleString('vi-VN')
+            });
+            if (hist.length > 300) hist.length = 300;
+            chrome.storage.local.set({ interactionHistory: hist });
+          }
+        });
+      } catch (_) {}
     }
 
     // Feature 4: Auto Share / Direct Paste to Messenger if enabled
@@ -2100,6 +2154,7 @@
     isInteracting = true;
     isInteractingBusy = false;
     interactionCount = 0;
+    commentCount = 0;
     lastInteractionTime = 0;
     processedInteractionCards = new WeakSet();
     runInteractionPass();
