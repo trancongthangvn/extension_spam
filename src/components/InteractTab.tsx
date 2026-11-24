@@ -116,12 +116,6 @@ export function InteractTab({
             ))}
           </div>
         </div>
-
-        <div style={{ marginTop: 8, fontSize: 11, color: '#64748b' }}>
-          <span>
-            Phím tắt trên trang Facebook: <strong>Alt + S</strong>
-          </span>
-        </div>
       </section>
 
       {/* Automatic Like & Comment */}
@@ -286,7 +280,7 @@ export function InteractTab({
           </div>
         </div>
 
-        {/* Delay and Limit Controls */}
+        {/* Delay Control */}
         <div
           style={{
             marginTop: 10,
@@ -313,26 +307,6 @@ export function InteractTab({
               const parsed = parseInt(e.target.value, 10) || 5;
               onUpdateSettings({
                 interactionDelay: Math.max(2, Math.min(120, parsed)),
-              });
-            }}
-          />
-          <label
-            htmlFor="numInteractionLimit"
-            style={{ fontSize: 11, color: 'var(--text-secondary)' }}
-          >
-            Tối đa bài:
-          </label>
-          <input
-            type="number"
-            id="numInteractionLimit"
-            min={1}
-            max={9999}
-            className="interaction-number"
-            value={settings.interactionLimit}
-            onChange={(e) => {
-              const parsed = parseInt(e.target.value, 10) || 10;
-              onUpdateSettings({
-                interactionLimit: Math.max(1, Math.min(9999, parsed)),
               });
             }}
           />
@@ -393,16 +367,15 @@ export function InteractTab({
                 type="text"
                 id="txtMessengerGroupName"
                 className="input-text-full"
-                placeholder="Ví dụ: Trường, Quang Trường (hoặc để trống nếu đang mở sẵn)"
+                placeholder="Ví dụ: Tên người nhận, biệt danh và tên nhóm"
                 value={settings.messengerTargetName}
                 onChange={(e) =>
                   onUpdateSettings({ messengerTargetName: e.target.value })
                 }
               />
               <p className="field-hint">
-                💡 Nếu bạn đang <strong>mở sẵn ô chat ở góc dưới màn hình</strong> (như nhóm
-                Trường, Quang Trường), extension sẽ{' '}
-                <strong>tự nhận diện ô chat và dán gửi thẳng vào đó</strong>!
+                💡 Nếu bạn <strong>mở sẵn ô chat ở góc dưới màn hình</strong>, Extension sẽ{' '}
+                <strong>tự nhận diện ô chat và gửi thẳng vào ô chat đó</strong>
               </p>
             </div>
 

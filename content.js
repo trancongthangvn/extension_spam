@@ -43,6 +43,7 @@
   let interactionTimer = null;
   let interactionCount = 0;
   let processedInteractionCards = new WeakSet();
+  const commentedPostKeys = new Set();
   let interactionDiagnostic = 'Chưa quét bài';
   let commentSeqIndex = 0;
 
@@ -722,8 +723,9 @@
   function isPostLikeButton(btn) {
     if (!btn || (btn.offsetParent === null && btn.getClientRects().length === 0)) return false;
 
-    // 1. Must not be in widgets, toasts, badges, or chat tabs
+    // 1. Must not be in widgets, toasts, badges, chat tabs, or temporary post modals while scrolling
     if (btn.closest('.fb-spam-scroll-widget, .fb-spam-alert-badge, .fb-spam-toast, [data-pagelet*="Chat"], [data-pagelet*="MWChat"], [role="region"][aria-label*="Chat" i], [role="region"][aria-label*="Đoạn chat" i], [role="region"][aria-label*="Messenger" i]')) return false;
+    if (isScrolling && btn.closest('div[role="dialog"]')) return false;
 
     // 2. Must not be already interacted
     if (btn.dataset && btn.dataset.fbInteracted === 'true') return false;
@@ -868,14 +870,28 @@
 
     let parent = likeBtn.parentElement;
     for (let depth = 0; depth < 4 && parent; depth++) {
-      const buttons = parent.querySelectorAll('[role="button"], button');
+      const buttons = [...parent.querySelectorAll('[role="button"], button')];
       for (const btn of buttons) {
         if (btn === likeBtn) continue;
-        const aria = normalizeText(btn.getAttribute('aria-label') || '');
+        const rawAria = btn.getAttribute('aria-label') || btn.querySelector('[aria-label]')?.getAttribute('aria-label') || '';
+        const aria = normalizeText(rawAria);
         const text = normalizeText(btn.innerText || btn.textContent || '');
-        if (/^(bình luận|comment|viết bình luận|leave a comment)$/i.test(aria) ||
+        if (/^(bình luận|comment|viết bình luận|leave a comment)/i.test(aria) ||
+            /\d+\s*(bình luận|comment)/i.test(aria) ||
             /^(bình luận|comment)$/i.test(text)) {
           return btn;
+        }
+      }
+      // In compact [👍] [💬] [↗] action bars (2-4 buttons on one row), the button right next to Like is Comment
+      const parentRect = parent.getBoundingClientRect();
+      if (parentRect.height > 18 && parentRect.height <= 64 && buttons.length >= 2 && buttons.length <= 4) {
+        const likeIdx = buttons.indexOf(likeBtn);
+        if (likeIdx >= 0 && likeIdx + 1 < buttons.length) {
+          const nextBtn = buttons[likeIdx + 1];
+          const nextAria = normalizeText(nextBtn.getAttribute('aria-label') || '');
+          if (!/chia sẻ|share|cảm xúc/i.test(nextAria)) {
+            return nextBtn;
+          }
         }
       }
       parent = parent.parentElement;
@@ -886,12 +902,13 @@
       for (const btn of cardButtons) {
         if (btn === likeBtn) continue;
         if (btn.closest('ul, [aria-label*="Bình luận về" i], [aria-label*="Comment by" i]')) continue;
-        const aria = normalizeText(btn.getAttribute('aria-label') || '');
+        const rawAria = btn.getAttribute('aria-label') || btn.querySelector('[aria-label]')?.getAttribute('aria-label') || '';
+        const aria = normalizeText(rawAria);
         const text = normalizeText(btn.innerText || btn.textContent || '');
-        if (/\d+\s*(bình luận|comment)/i.test(text) || /\d+\s*(bình luận|comment)/i.test(aria)) continue;
         if (/xem thêm|phù hợp nhất/i.test(text) || /trả lời/i.test(text)) continue;
 
-        if (/^(bình luận|comment|viết bình luận|leave a comment)$/i.test(aria) ||
+        if (/^(bình luận|comment|viết bình luận|leave a comment)/i.test(aria) ||
+            /\d+\s*(bình luận|comment)/i.test(aria) ||
             /^(bình luận|comment)$/i.test(text)) {
           return btn;
         }
@@ -968,6 +985,8 @@
       'div[contenteditable="true"][data-lexical-editor="true"]',
       'div[contenteditable="true"][aria-label*="bình luận" i]',
       'div[contenteditable="true"][aria-label*="comment" i]',
+      'div[contenteditable="true"][aria-placeholder*="bình luận" i]',
+      'div[contenteditable="true"][aria-placeholder*="comment" i]',
       'div[contenteditable="true"][aria-label*="viết" i]',
       'div[contenteditable="true"][aria-label*="write" i]',
       'form textarea'
@@ -1051,36 +1070,14 @@
     } catch (_) {}
     await sleep(100);
 
-    // 3. Dispatch beforeinput
-    try {
-      textbox.dispatchEvent(new InputEvent('beforeinput', {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        inputType: 'insertText',
-        data: text
-      }));
-    } catch (_) {}
-
-    // 4. Native insertText
+    // 3. Insert text ONCE via native execCommand (browser fires its own beforeinput/input)
     try {
       document.execCommand('insertText', false, text);
     } catch (_) {}
+    await sleep(80);
 
-    // 5. Dispatch input event for Lexical state sync
-    try {
-      textbox.dispatchEvent(new InputEvent('input', {
-        bubbles: true,
-        cancelable: true,
-        composed: true,
-        inputType: 'insertText',
-        data: text,
-        isComposing: false
-      }));
-    } catch (_) {}
-
-    // 6. Fallback paste event if text didn't land
-    const currentText = (textbox.innerText || textbox.textContent || '').trim();
+    // 4. Fallback paste event ONLY if text didn't land at all
+    const currentText = (textbox.textContent || '').trim();
     if (!currentText) {
       try {
         const dt = new DataTransfer();
@@ -1091,13 +1088,10 @@
           clipboardData: dt
         }));
       } catch (_) {}
+      await sleep(80);
     }
 
-    // 7. Fire change event
-    textbox.dispatchEvent(new Event('input', { bubbles: true }));
-    textbox.dispatchEvent(new Event('change', { bubbles: true }));
-    await sleep(250);
-
+    await sleep(150);
     return true;
   }
 
@@ -1124,6 +1118,7 @@
         const btns = composer.querySelectorAll(sel);
         for (const b of btns) {
           if (b === textbox) continue;
+          if (b.getAttribute('aria-disabled') === 'true') continue;
           const aria = normalizeText(b.getAttribute('aria-label') || '');
           if (/viết bình luận|leave a comment/i.test(aria)) continue;
           if (b.offsetParent !== null && b.getBoundingClientRect().width > 0) {
@@ -1136,9 +1131,17 @@
       }
     }
 
-    // Standard Enter key sequence
-    await sleep(200);
-    textbox.focus();
+    if (clickedButton) {
+      await sleep(350);
+      const stillHasText = (textbox.textContent || '').trim().length > 0;
+      if (!stillHasText || !textbox.isConnected) {
+        return true;
+      }
+    }
+
+    // Fallback Enter key sequence ONLY if submit button wasn't clicked or didn't clear the box
+    await sleep(120);
+    textbox.focus({ preventScroll: true });
 
     const keyConfig = {
       key: 'Enter',
@@ -1163,6 +1166,30 @@
 
   // Feature 1: Multiple comment templates selector
   let lastCommentUsed = '';
+  let isExtensionSendingChat = false;
+  const chatInteractionTimestamps = new WeakMap();
+
+  function getMessengerChatContainerFromNode(node) {
+    if (!node || !node.closest) return null;
+    if (node.closest('.fb-spam-scroll-widget, .fb-spam-alert-badge, .fb-spam-toast')) return null;
+    return node.closest(
+      'div[data-pagelet*="Chat"], div[data-pagelet*="MWChat"], div[role="region"][aria-label*="Đoạn chat" i], div[role="region"][aria-label*="Chat" i], div[role="region"][aria-label*="Messenger" i], div[aria-label*="Đoạn chat" i]'
+    );
+  }
+
+  function recordUserChatInteraction(e) {
+    if (isExtensionSendingChat) return;
+    const target = e.target && e.target.nodeType === 1 ? e.target : e.target?.parentElement;
+    if (!target) return;
+    const container = getMessengerChatContainerFromNode(target);
+    if (container) {
+      chatInteractionTimestamps.set(container, Date.now());
+    }
+  }
+
+  document.addEventListener('mousedown', recordUserChatInteraction, true);
+  document.addEventListener('focusin', recordUserChatInteraction, true);
+  document.addEventListener('keydown', recordUserChatInteraction, true);
 
   function getNextCommentTemplate() {
     let list = [];
@@ -1215,9 +1242,9 @@
       const isNearBottom = rect.bottom >= (window.innerHeight - 350);
       const isRightSide = rect.right >= (window.innerWidth / 2);
 
-      const chatContainer = tb.closest(
-        'div[data-pagelet*="Chat"], div[role="region"], div[aria-label*="Đoạn chat" i], div[aria-label*="Chat" i], div.x1n2onr6'
-      ) || tb.parentElement?.parentElement?.parentElement?.parentElement;
+      const chatContainer = getMessengerChatContainerFromNode(tb) ||
+        tb.closest('div[data-pagelet*="Chat"], div[role="region"], div[aria-label*="Đoạn chat" i], div[aria-label*="Chat" i]') ||
+        tb.parentElement?.parentElement?.parentElement?.parentElement;
 
       let containerText = '';
       if (chatContainer) {
@@ -1251,7 +1278,22 @@
       }
     }
 
-    return candidates[candidates.length - 1];
+    // No preferredName: pick the chat box the user interacted with most recently
+    let bestCand = null;
+    let bestTime = 0;
+    for (const cand of candidates) {
+      const t = cand.container ? (chatInteractionTimestamps.get(cand.container) || 0) : 0;
+      if (t > bestTime) {
+        bestTime = t;
+        bestCand = cand;
+      }
+      // Also check if document.activeElement is currently inside this chat box
+      if (!bestTime && cand.container && document.activeElement && cand.container.contains(document.activeElement)) {
+        bestCand = cand;
+      }
+    }
+
+    return bestCand || candidates[0];
   }
 
   function openMinimizedMessengerBubble(preferredName) {
@@ -1274,6 +1316,7 @@
     if (!chatBox || !messageText) return false;
     const tb = chatBox.textbox || chatBox;
 
+    isExtensionSendingChat = true;
     try {
       tb.focus({ preventScroll: true });
       tb.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
@@ -1292,30 +1335,11 @@
       } catch (_) {}
       await sleep(40);
 
-      // Insert message
-      try {
-        tb.dispatchEvent(new InputEvent('beforeinput', {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          inputType: 'insertText',
-          data: messageText
-        }));
-      } catch (_) {}
-
+      // Insert message ONCE via execCommand (fallback to paste only if empty)
       try {
         document.execCommand('insertText', false, messageText);
       } catch (_) {}
-
-      try {
-        tb.dispatchEvent(new InputEvent('input', {
-          bubbles: true,
-          cancelable: true,
-          composed: true,
-          inputType: 'insertText',
-          data: messageText
-        }));
-      } catch (_) {}
+      await sleep(80);
 
       const curVal = (tb.textContent || '').trim();
       if (!curVal) {
@@ -1328,11 +1352,10 @@
             clipboardData: dt
           }));
         } catch (_) {}
+        await sleep(80);
       }
 
-      tb.dispatchEvent(new Event('input', { bubbles: true }));
-      tb.dispatchEvent(new Event('change', { bubbles: true }));
-      await sleep(180);
+      await sleep(140);
 
       // Press Enter key to send
       const keyOpts = {
@@ -1372,77 +1395,195 @@
     } catch (err) {
       console.warn('[FB Sentinel] sendToMessengerChatTab error:', err);
       return false;
+    } finally {
+      isExtensionSendingChat = false;
     }
   }
 
+  function setReactInputValue(inputEl, value) {
+    if (!inputEl) return;
+    inputEl.focus({ preventScroll: true });
+    try {
+      const proto = inputEl.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+      const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+      if (nativeSetter) {
+        nativeSetter.call(inputEl, value);
+      } else {
+        inputEl.value = value;
+      }
+    } catch (_) {
+      inputEl.value = value;
+    }
+    inputEl.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, inputType: 'insertText', data: value }));
+    inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  function findMessengerShareDialog() {
+    const dialogs = document.querySelectorAll('div[role="dialog"]');
+    for (const d of dialogs) {
+      if (d.offsetParent === null && d.getClientRects().length === 0) continue;
+      if (d.closest('.fb-spam-scroll-widget')) continue;
+      const dText = normalizeText(d.textContent || '');
+      const dAria = normalizeText(d.getAttribute('aria-label') || '');
+      if (/gửi bằng messenger|send in messenger|gửi trong messenger|tìm kiếm người|search for people|chia sẻ/i.test(dText) ||
+          /gửi bằng messenger|send in messenger|gửi trong messenger|chia sẻ/i.test(dAria) ||
+          d.querySelector('input[placeholder*="Tìm kiếm" i], input[placeholder*="Search" i]')) {
+        return d;
+      }
+    }
+    return null;
+  }
+
+  function findExactRecipientRow(dialog, groupName) {
+    if (!dialog || !groupName) return null;
+    const candidates = dialog.querySelectorAll('[role="listitem"], [role="row"], [role="option"], [role="checkbox"], [role="button"], a[role="link"], div[tabindex="0"], li, label, div');
+    let bestRow = null;
+    let bestArea = Infinity;
+
+    for (const el of candidates) {
+      if (el === dialog) continue;
+      if (el.offsetParent === null && el.getClientRects().length === 0) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.height < 32 || rect.height > 120 || rect.width < 140) continue;
+      const txt = normalizeText(el.textContent || '');
+      if (!txt || !txt.includes(groupName)) continue;
+      // Avoid matching a button that is literally just "Gửi" or search input container
+      if (/^(gửi|send|đóng|close)$/i.test(txt)) continue;
+      if (el.querySelector('input[type="search"], input[type="text"]')) continue;
+
+      const area = rect.width * rect.height;
+      if (area < bestArea) {
+        bestArea = area;
+        bestRow = el;
+      }
+    }
+    return bestRow;
+  }
+
+  async function openAndSendViaHeaderMessenger(targetName, messageText) {
+    const normTarget = normalizeText(targetName);
+    if (!normTarget || !messageText) return false;
+
+    const messBtn = document.querySelector(
+      '[role="banner"] [role="button"][aria-label*="Messenger" i], [role="navigation"] [role="button"][aria-label*="Messenger" i], div[role="button"][aria-label="Messenger" i]'
+    );
+    if (!messBtn || (messBtn.offsetParent === null && messBtn.getClientRects().length === 0)) {
+      return false;
+    }
+
+    simulateClick(messBtn);
+    await sleep(600);
+
+    let messPanel = null;
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const dialogs = document.querySelectorAll('div[role="dialog"], div[aria-label*="Đoạn chat" i], div[aria-label*="Messenger" i]');
+      for (const d of dialogs) {
+        if (d.offsetParent === null && d.getClientRects().length === 0) continue;
+        if (d.querySelector('input[type="search"], input[placeholder*="Tìm kiếm" i], input[placeholder*="Search" i]')) {
+          messPanel = d;
+          break;
+        }
+      }
+      if (messPanel) break;
+      await sleep(250);
+    }
+
+    if (!messPanel) return false;
+
+    const searchInput = messPanel.querySelector(
+      'input[type="search"], input[placeholder*="Tìm kiếm" i], input[placeholder*="Search" i], input[aria-label*="Tìm kiếm" i], input[aria-label*="Search" i]'
+    );
+    if (!searchInput) return false;
+
+    setReactInputValue(searchInput, targetName.trim());
+    await sleep(1000);
+
+    const matchedRow = findExactRecipientRow(messPanel, normTarget);
+    if (!matchedRow) {
+      // Close Messenger dropdown if not found
+      simulateClick(messBtn);
+      return false;
+    }
+
+    const clickTarget = matchedRow.closest('[role="button"], a[role="link"], div[tabindex="0"]') || matchedRow;
+    simulateClick(clickTarget);
+
+    let openedChat = null;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      await sleep(250);
+      openedChat = findActiveMessengerChatBox(targetName);
+      if (openedChat) break;
+    }
+
+    if (!openedChat) return false;
+
+    const sent = await sendToMessengerChatTab(openedChat, messageText);
+    if (sent) {
+      await sleep(250);
+      const container = openedChat.container;
+      const closeChatBtn = container?.querySelector(
+        '[aria-label*="Đóng đoạn chat" i][role="button"], [aria-label*="Close chat" i][role="button"], [aria-label*="Đóng" i][role="button"]'
+      );
+      if (closeChatBtn) {
+        simulateClick(closeChatBtn);
+      }
+    }
+    return sent;
+  }
+
   async function sendPostViaMessengerDialog(targetGroupName, customMessage, card, likeBtn) {
-    const groupName = (targetGroupName || config.messengerTargetName || '').trim().toLowerCase();
+    const groupName = normalizeText(targetGroupName || config.messengerTargetName || '');
     const shareBtn = getShareButton(likeBtn, card);
     if (!shareBtn) return false;
 
-    shareBtn.scrollIntoView?.({ block: 'nearest' });
-    await sleep(300);
     simulateClick(shareBtn);
-    await sleep(700);
+    await sleep(500);
 
-    let messengerMenuItem = null;
-    const menuCandidates = document.querySelectorAll('[role="menuitem"], [role="button"], div[tabindex="0"], span');
-    for (const item of menuCandidates) {
-      const text = normalizeText(item.innerText || item.textContent || '');
-      const aria = normalizeText(item.getAttribute('aria-label') || '');
-      if (/gửi bằng messenger|send in messenger|gửi trong messenger|chia sẻ qua messenger/i.test(text) ||
-          /gửi bằng messenger|send in messenger|gửi trong messenger/i.test(aria)) {
-        messengerMenuItem = item.closest('[role="menuitem"], [role="button"]') || item;
+    // Wait for either Messenger menu item or Share dialog
+    let dialog = null;
+    let clickedMessengerOption = false;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const existingDialog = findMessengerShareDialog();
+      const hasSearchAlready = existingDialog?.querySelector('input[placeholder*="Tìm kiếm" i], input[placeholder*="Search" i], input[aria-label*="Tìm kiếm" i], input[aria-label*="Search" i]');
+      if (hasSearchAlready) {
+        dialog = existingDialog;
         break;
       }
+
+      if (!clickedMessengerOption) {
+        const scope = existingDialog || document;
+        const menuCandidates = scope.querySelectorAll('[role="menuitem"], [role="button"], div[tabindex="0"]');
+        for (const item of menuCandidates) {
+          if (item.offsetParent === null && item.getClientRects().length === 0) continue;
+          const text = normalizeText(item.textContent || '');
+          const aria = normalizeText(item.getAttribute('aria-label') || '');
+          if (/gửi bằng messenger|send in messenger|gửi trong messenger|chia sẻ qua messenger/i.test(text) ||
+              /gửi bằng messenger|send in messenger|gửi trong messenger/i.test(aria)) {
+            simulateClick(item);
+            clickedMessengerOption = true;
+            break;
+          }
+        }
+      }
+      await sleep(300);
     }
 
-    if (!messengerMenuItem) {
+    if (!dialog) {
+      dialog = findMessengerShareDialog();
+    }
+
+    if (!dialog) {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
       return false;
     }
 
-    simulateClick(messengerMenuItem);
-    await sleep(1000);
-
-    let dialog = null;
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const dialogs = document.querySelectorAll('div[role="dialog"]');
-      for (const d of dialogs) {
-        const dText = normalizeText(d.innerText || d.textContent || '');
-        const dAria = normalizeText(d.getAttribute('aria-label') || '');
-        if (/gửi bằng messenger|send in messenger|tìm kiếm người|search for people/i.test(dText) ||
-            /gửi bằng messenger|send in messenger/i.test(dAria) ||
-            d.querySelector('input[placeholder*="Tìm kiếm" i], input[placeholder*="Search" i]')) {
-          dialog = d;
-          break;
-        }
-      }
-      if (dialog) break;
-      await sleep(300);
-    }
-
-    if (!dialog) return false;
-
     const searchInput = dialog.querySelector(
-      'input[placeholder*="Tìm kiếm" i], input[placeholder*="Search" i], input[aria-label*="Tìm kiếm" i], input[aria-label*="Search" i], input[type="text"]'
+      'input[type="search"], input[placeholder*="Tìm kiếm" i], input[placeholder*="Search" i], input[aria-label*="Tìm kiếm" i], input[aria-label*="Search" i], input[type="text"]'
     );
 
     if (searchInput && groupName) {
-      searchInput.focus();
-      await sleep(150);
-      try {
-        searchInput.select?.();
-        document.execCommand('delete', false, null);
-        document.execCommand('insertText', false, groupName);
-      } catch (_) {
-        searchInput.value = groupName;
-      }
-      searchInput.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, inputType: 'insertText', data: groupName }));
-      searchInput.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: groupName }));
-      searchInput.dispatchEvent(new Event('input', { bubbles: true }));
-      searchInput.dispatchEvent(new Event('change', { bubbles: true }));
-      await sleep(1200);
+      setReactInputValue(searchInput, targetGroupName || config.messengerTargetName || '');
+      await sleep(1100);
     }
 
     if (customMessage) {
@@ -1450,37 +1591,62 @@
       if (msgBox) {
         try {
           await typeCommentIntoEditor(msgBox, customMessage);
-          await sleep(300);
+          await sleep(250);
         } catch (_) {}
       }
     }
 
     let sent = false;
-    const allButtons = dialog.querySelectorAll('[role="button"], button');
-    for (const btn of allButtons) {
-      if (btn.offsetParent === null) continue;
-      const btnText = normalizeText(btn.innerText || btn.textContent || '');
-      const btnAria = normalizeText(btn.getAttribute('aria-label') || '');
-      if (/đóng|close|quay lại|back/i.test(btnAria) || /đóng|close/i.test(btnText)) continue;
-
-      if (/^(gửi|send)$/i.test(btnText) || /^(gửi|send)$/i.test(btnAria)) {
-        const row = btn.closest('[role="listitem"], [role="row"], div[tabindex="0"]') || btn.parentElement?.parentElement;
-        const rowText = normalizeText(row?.innerText || row?.textContent || '').toLowerCase();
-        if (!groupName || rowText.includes(groupName)) {
-          simulateClick(btn);
-          sent = true;
-          showToast(`✅ Đã gửi bài viết vào nhóm Messenger!`);
-          break;
+    if (groupName) {
+      const matchedRow = findExactRecipientRow(dialog, groupName);
+      if (matchedRow) {
+        // Case 1: Row itself has a "Gửi" / "Send" button
+        const rowSendBtns = matchedRow.querySelectorAll('[role="button"], button');
+        for (const btn of rowSendBtns) {
+          if (btn.offsetParent === null) continue;
+          const btnText = normalizeText(btn.textContent || '');
+          const btnAria = normalizeText(btn.getAttribute('aria-label') || '');
+          if (/^(gửi|send)$/i.test(btnText) || /^(gửi|send)$/i.test(btnAria)) {
+            simulateClick(btn);
+            sent = true;
+            break;
+          }
         }
+
+        // Case 2: Select recipient row/checkbox first, then click dialog's bottom "Gửi" button
+        if (!sent) {
+          const checkbox = matchedRow.querySelector('[role="checkbox"], input[type="checkbox"], [role="radio"]') || matchedRow;
+          simulateClick(checkbox);
+          await sleep(300);
+
+          const dialogBtns = dialog.querySelectorAll('[role="button"], button');
+          for (const btn of dialogBtns) {
+            if (btn.offsetParent === null) continue;
+            const btnText = normalizeText(btn.textContent || '');
+            const btnAria = normalizeText(btn.getAttribute('aria-label') || '');
+            if (/đóng|close|quay lại|back|hủy|cancel/i.test(btnAria) || /đóng|close|hủy|cancel/i.test(btnText)) continue;
+            if (/^(gửi|send)$/i.test(btnText) || /^(gửi|send)$/i.test(btnAria)) {
+              simulateClick(btn);
+              sent = true;
+              break;
+            }
+          }
+        }
+      } else {
+        console.log('[FB Sentinel] Không tìm thấy người/nhóm khớp tên:', groupName);
       }
     }
 
-    await sleep(800);
-    const closeBtn = dialog.querySelector('[aria-label="Đóng"][role="button"], [aria-label="Close"][role="button"]');
+    if (sent) {
+      showToast(`✅ Đã gửi bài viết cho "${targetGroupName || config.messengerTargetName}"!`);
+    }
+
+    await sleep(600);
+    const closeBtn = dialog.querySelector('[aria-label="Đóng" i][role="button"], [aria-label="Close" i][role="button"]');
     if (closeBtn) {
       simulateClick(closeBtn);
     } else {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', keyCode: 27, bubbles: true }));
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', keyCode: 27, bubbles: true }));
     }
     return sent;
   }
@@ -1490,7 +1656,7 @@
     try {
       const u = new URL(rawUrl, window.location.origin);
       const keepParams = new URLSearchParams();
-      for (const key of ['fbid', 'story_fbid', 'id', 'v', 'set', 'comment_id']) {
+      for (const key of ['fbid', 'story_fbid', 'id', 'v', 'set']) {
         const val = u.searchParams.get(key);
         if (val) keepParams.set(key, val);
       }
@@ -1533,11 +1699,13 @@
     hydrateTimestampLinks(postRoot);
 
     const isCommentLink = (a) => Boolean(a.closest('ul, [aria-label*="Bình luận về" i], [aria-label*="Comment by" i], [aria-label*="Danh sách bình luận" i]'));
+    const postTop = postRoot.getBoundingClientRect().top;
+    const isHeaderRegion = (a) => (a.getBoundingClientRect().top - postTop) <= 280;
 
-    // 1. Check timestamp/header links in this post first (most accurate permalink)
+    // 1. Check timestamp/header links in the top header of this exact post first
     const headerLinks = postRoot.querySelectorAll('h2 a, h3 a, h4 a, [data-ad-rendering-role="profile_name"] a, a[role="link"]');
     for (const a of headerLinks) {
-      if (isCommentLink(a)) continue;
+      if (isCommentLink(a) || !isHeaderRegion(a)) continue;
       const h = a.href || '';
       if (!h || h.includes('/user/') || h.includes('profile.php') || h.includes('#') || h.includes('/photo')) continue;
       if (h.includes('/posts/') || h.includes('/permalink/') || h.includes('story_fbid=') || h.includes('/reel/') || h.includes('/share/p/') || h.includes('/share/v/')) {
@@ -1551,7 +1719,7 @@
       }
     }
 
-    // 2. Fallback to direct post/permalink links inside this post only
+    // 2. Fallback to direct post/permalink links inside this post (preferring top-most)
     const postLinks = postRoot.querySelectorAll(
       'a[href*="/posts/"], a[href*="/permalink/"], a[href*="story_fbid="], a[href*="/share/p/"], a[href*="/share/v/"], a[href*="/watch/"], a[href*="/reel/"]'
     );
@@ -1579,6 +1747,18 @@
           const groupMatch = groupLink?.href?.match(/\/groups\/([^/?#]+)/);
           if (groupMatch && groupMatch[1]) {
             return `https://www.facebook.com/groups/${groupMatch[1]}/posts/${postId}/`;
+          }
+          const ownerLink = postRoot.querySelector('h2 a, h3 a, h4 a, [data-ad-rendering-role="profile_name"] a');
+          if (ownerLink?.href) {
+            const ownerUrl = new URL(ownerLink.href, window.location.origin);
+            const ownerId = ownerUrl.searchParams.get('id');
+            if (ownerId) {
+              return `https://www.facebook.com/permalink.php?story_fbid=${postId}&id=${ownerId}`;
+            }
+            const slugMatch = ownerUrl.pathname.match(/^\/([^/?#]+)\/?$/);
+            if (slugMatch && slugMatch[1] && !['groups', 'profile.php', 'watch', 'reel'].includes(slugMatch[1])) {
+              return `https://www.facebook.com/${slugMatch[1]}/posts/${postId}/`;
+            }
           }
           return `https://www.facebook.com/${postId}`;
         }
@@ -1620,6 +1800,11 @@
   async function sharePostToMessenger(likeBtn, card, capturedPhones) {
     try {
       let postUrl = getPostUrlFromCard(card, likeBtn);
+      if (!postUrl || postUrl.includes('/photo')) {
+        await sleep(160);
+        const retriedUrl = getPostUrlFromCard(card, likeBtn);
+        if (retriedUrl) postUrl = retriedUrl;
+      }
 
       if (isVideoOrReelPost(card, likeBtn, postUrl)) {
         console.log('[FB Sentinel] Bỏ qua gửi Messenger vì đây là bài Video/Reel.');
@@ -1644,10 +1829,11 @@
 
       let msgToSend = postUrl;
       if (capturedPhones && capturedPhones.length > 0) {
-        msgToSend = `${postUrl}\n📞 SĐT: ${capturedPhones.join(', ')}`;
+        const uniquePhones = [...new Set(capturedPhones.map(p => p.trim()).filter(Boolean))];
+        msgToSend = `${postUrl} | 📞 SĐT: ${uniquePhones.join(', ')}`;
       }
       if (config.messengerCustomMsg) {
-        msgToSend = `${config.messengerCustomMsg}\n${msgToSend}`;
+        msgToSend = `${config.messengerCustomMsg} ${msgToSend}`;
       }
 
       // Ưu tiên 1: Tự động dán vào cửa sổ Chat Messenger đang mở ở góc dưới màn hình
@@ -1667,7 +1853,13 @@
         }
       }
 
-      // Ưu tiên 3: Dùng hộp thoại Chia sẻ -> Gửi bằng Messenger
+      // Ưu tiên 3: Tự mở hộp thoại Messenger trên thanh tiêu đề để gửi đúng người/nhóm (chạy được cả nhóm riêng tư)
+      if (config.messengerTargetName) {
+        const ok = await openAndSendViaHeaderMessenger(config.messengerTargetName, msgToSend);
+        if (ok) return true;
+      }
+
+      // Ưu tiên 4: Dùng hộp thoại Chia sẻ -> Gửi bằng Messenger
       if (config.messengerTargetName) {
         const ok = await sendPostViaMessengerDialog(config.messengerTargetName, config.messengerCustomMsg, card, likeBtn);
         if (ok) return true;
@@ -1767,7 +1959,7 @@
       }
       interactionCount++;
       interactionDiagnostic = `Đã Like bài #${interactionCount}`;
-      showToast(`👍 Đã Like bài (${interactionCount}/${config.interactionLimit || 10})`);
+      showToast(`👍 Đã Like bài #${interactionCount}`);
     }
 
     // Check FB Warning again after Like
@@ -1780,9 +1972,11 @@
       }
     }
 
-    // Feature 1 & 2: Comment each post using chosen template
+    // Feature 1 & 2: Comment each post ONCE using chosen template (deduped by post key)
     const commentText = getNextCommentTemplate();
-    if (commentText) {
+    const postCommentKey = (getPostUrlFromCard(card, likeBtn) || normalizeText((card?.textContent || '').slice(0, 120)));
+    if (commentText && (!postCommentKey || !commentedPostKeys.has(postCommentKey))) {
+      if (postCommentKey) commentedPostKeys.add(postCommentKey);
       await sleep(350);
 
       let textbox = findCommentTextbox(card, likeBtn);
@@ -1801,7 +1995,7 @@
           await sleep(400);
           await submitComment(textbox, card);
           interactionDiagnostic = `Đã comment bài #${interactionCount || 1}`;
-          showToast(`💬 Đã bình luận (${interactionCount || 1}/${config.interactionLimit || 10})`);
+          showToast(`💬 Đã bình luận bài #${interactionCount || 1}`);
 
           // If comment opened in a post modal dialog, close it so scrolling can continue cleanly
           const openedDialog = textbox.closest('div[role="dialog"]');

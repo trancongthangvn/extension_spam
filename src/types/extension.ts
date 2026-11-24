@@ -69,7 +69,7 @@ export const DEFAULT_SETTINGS: ExtensionSettings = {
   skipAlreadyLiked: true,
   autoStopOnFbWarning: true,
   autoShareMessenger: true,
-  messengerTargetName: 'Trường, Quang Trường',
+  messengerTargetName: '',
   messengerCustomMsg: '',
   shareOnlyLeads: false,
   commentTemplate: 'xin chào bạn\nbài viết hữu ích quá ạ\ncho mình xin thêm thông tin với nhé',
