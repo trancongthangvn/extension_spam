@@ -248,6 +248,8 @@
         updateSpeedUI();
       }
       sendResponse({ speed: scrollSpeedLevel });
+    } else if (message.action === 'GET_LATEST_GROUP') {
+      sendResponse({ groupUrl: findNewestGroupUrl() });
     }
     return true;
   });
@@ -1768,6 +1770,63 @@
     }
 
     return '';
+  }
+
+  function parsePostAgeMinutes(text) {
+    const t = normalizeText(text);
+    if (!t) return Infinity;
+    if (/^(vừa xong|just now)$/i.test(t)) return 0;
+    let m = t.match(/^(\d+)\s*(?:phút|min|mins|m)\b/i);
+    if (m) return parseInt(m[1], 10);
+    m = t.match(/^(\d+)\s*(?:giờ|hr|hrs|h)\b/i);
+    if (m) return parseInt(m[1], 10) * 60;
+    if (/^(hôm qua|yesterday)$/i.test(t)) return 1440;
+    m = t.match(/^(\d+)\s*(?:ngày|day|days|d)\b/i);
+    if (m) return parseInt(m[1], 10) * 1440;
+    m = t.match(/^(\d+)\s*(?:tuần|week|weeks|w)\b/i);
+    if (m) return parseInt(m[1], 10) * 10080;
+    return Infinity;
+  }
+
+  function findNewestGroupUrl() {
+    const cards = document.querySelectorAll('[role="feed"] > div, [aria-posinset], div[data-pagelet^="FeedUnit"], [role="article"]');
+    let bestUrl = '';
+    let bestAge = Infinity;
+
+    for (const card of cards) {
+      if (card.closest && card.closest('ul, [aria-label*="Bình luận về" i], [aria-label*="Comment by" i]')) continue;
+      const groupLinks = card.querySelectorAll('a[href*="/groups/"]');
+      let groupId = '';
+      for (const gl of groupLinks) {
+        const match = (gl.href || '').match(/\/groups\/([^/?#]+)/);
+        if (match && match[1] && !['feed', 'joins', 'discover', 'create', 'notifications'].includes(match[1].toLowerCase())) {
+          groupId = match[1];
+          break;
+        }
+      }
+      if (!groupId) continue;
+
+      let cardAge = Infinity;
+      const timeEls = card.querySelectorAll('a[role="link"], a[tabindex="0"], span');
+      for (const el of timeEls) {
+        if (el.closest('ul, [aria-label*="Bình luận về" i], [aria-label*="Comment by" i]')) continue;
+        const txt = (el.textContent || '').trim();
+        if (txt.length > 25) continue;
+        const age = parsePostAgeMinutes(txt);
+        if (age < cardAge) {
+          cardAge = age;
+        }
+      }
+
+      if (cardAge < bestAge) {
+        bestAge = cardAge;
+        bestUrl = `https://www.facebook.com/groups/${groupId}/?sorting_setting=CHRONOLOGICAL`;
+      } else if (!bestUrl) {
+        bestUrl = `https://www.facebook.com/groups/${groupId}/?sorting_setting=CHRONOLOGICAL`;
+      }
+    }
+
+    return bestUrl;
   }
 
   const sentPostUrls = new Set();

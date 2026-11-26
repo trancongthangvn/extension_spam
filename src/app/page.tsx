@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { ConfirmModal } from '@/components/ConfirmModal';
 import { FiltersTab } from '@/components/FiltersTab';
 import { InteractTab } from '@/components/InteractTab';
 import { LeadsTab } from '@/components/LeadsTab';
@@ -31,6 +32,8 @@ export default function PopupPage() {
   const [likedCount, setLikedCount] = useState(0);
   const [commentedCount, setCommentedCount] = useState(0);
   const [interactionDiagnostic, setInteractionDiagnostic] = useState('');
+  const [delayInput, setDelayInput] = useState<string>(String(DEFAULT_SETTINGS.interactionDelay));
+  const [showDelayModal, setShowDelayModal] = useState(false);
 
   const settingsRef = useRef<ExtensionSettings>(DEFAULT_SETTINGS);
   settingsRef.current = settings;
@@ -89,6 +92,7 @@ export default function PopupPage() {
         interactionLimit: data.interactionLimit || 10,
       };
       setSettings(loaded);
+      setDelayInput(String(loaded.interactionDelay));
       setLeads(Array.isArray(data.capturedLeads) ? data.capturedLeads : []);
 
       const stats = await sendActiveTabMessage({ action: 'GET_STATS' });
@@ -143,7 +147,42 @@ export default function PopupPage() {
     [persistAndNotify]
   );
 
+  const handleDelayInputChange = useCallback(
+    (val: string) => {
+      if (val.trim() === '') {
+        setDelayInput('');
+        return;
+      }
+      if (val === '0') {
+        setDelayInput('2');
+        const next = { ...settingsRef.current, interactionDelay: 2 };
+        setSettings(next);
+        void persistAndNotify(next);
+        return;
+      }
+      setDelayInput(val);
+      const parsed = parseInt(val, 10);
+      if (!Number.isNaN(parsed) && parsed >= 2) {
+        const clamped = Math.min(120, parsed);
+        const next = { ...settingsRef.current, interactionDelay: clamped };
+        setSettings(next);
+        void persistAndNotify(next);
+      }
+    },
+    [persistAndNotify]
+  );
+
   const handleToggleScroll = useCallback(async () => {
+    const hasComments = settingsRef.current.commentTemplate.trim().length > 0;
+    const parsedDelay = parseInt(delayInput, 10);
+    const isEmptyWithComments = hasComments && delayInput.trim() === '';
+    const isBelowMin =
+      delayInput.trim() !== '' && (Number.isNaN(parsedDelay) || parsedDelay < 2);
+    if (!isScrolling && (isEmptyWithComments || isBelowMin)) {
+      setShowDelayModal(true);
+      return;
+    }
+
     const tab = await getActiveTab();
     if (hasChromeExtensionApi() && (!tab?.url || !tab.url.includes('facebook.com'))) {
       alert('Vui lòng mở một tab Facebook để sử dụng tính năng tự lướt!');
@@ -155,7 +194,7 @@ export default function PopupPage() {
       settings: settingsRef.current,
     });
     applyTabStats(res);
-  }, [applyTabStats]);
+  }, [applyTabStats, delayInput, isScrolling]);
 
   const handleSetSpeed = useCallback(
     async (speed: number) => {
@@ -189,6 +228,13 @@ export default function PopupPage() {
   const handleRescan = useCallback(() => {
     void persistAndNotify(settingsRef.current, true);
   }, [persistAndNotify]);
+
+  const handleOpenLatestGroup = useCallback(async () => {
+    const res = await sendActiveTabMessage({ action: 'GET_LATEST_GROUP' });
+    const targetUrl =
+      res?.groupUrl || 'https://www.facebook.com/groups/feed/?sorting_setting=CHRONOLOGICAL';
+    openNewTab(targetUrl);
+  }, []);
 
   return (
     <div className="app-container">
@@ -235,6 +281,8 @@ export default function PopupPage() {
           likedCount={likedCount}
           commentedCount={commentedCount}
           interactionDiagnostic={interactionDiagnostic}
+          delayInput={delayInput}
+          onDelayInputChange={handleDelayInputChange}
           onUpdateSettings={handleUpdateSettings}
           onToggleScroll={handleToggleScroll}
           onSetSpeed={handleSetSpeed}
@@ -260,7 +308,7 @@ export default function PopupPage() {
         <button
           id="btnOpenGroups"
           className="btn btn-outline"
-          onClick={() => openNewTab('https://www.facebook.com/groups/feed/')}
+          onClick={() => void handleOpenLatestGroup()}
         >
           <svg
             width="15"
@@ -317,6 +365,26 @@ export default function PopupPage() {
           </span>
         </div>
       </footer>
+
+      <ConfirmModal
+        open={showDelayModal}
+        title="Thiếu thời gian giãn cách"
+        message="Mời bạn điền thời gian giãn cách (tối thiểu 2 giây)"
+        confirmLabel="Ok, ngay"
+        cancelLabel="Từ chối"
+        danger={false}
+        onCancel={() => setShowDelayModal(false)}
+        onConfirm={() => {
+          setShowDelayModal(false);
+          setTimeout(() => {
+            const el = document.getElementById('numInteractionDelay') as HTMLInputElement | null;
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              el.focus();
+            }
+          }, 50);
+        }}
+      />
     </div>
   );
 }

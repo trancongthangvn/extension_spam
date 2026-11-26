@@ -10,6 +10,8 @@ interface InteractTabProps {
   likedCount: number;
   commentedCount: number;
   interactionDiagnostic: string;
+  delayInput: string;
+  onDelayInputChange: (val: string) => void;
   onUpdateSettings: (patch: Partial<ExtensionSettings>, immediate?: boolean) => void;
   onToggleScroll: () => void;
   onSetSpeed: (speed: number) => void;
@@ -23,6 +25,8 @@ export function InteractTab({
   likedCount,
   commentedCount,
   interactionDiagnostic,
+  delayInput,
+  onDelayInputChange,
   onUpdateSettings,
   onToggleScroll,
   onSetSpeed,
@@ -71,12 +75,12 @@ export function InteractTab({
           className="card"
           style={{
             marginTop: 8,
-            padding: '7px 10px',
+            padding: '8px 10px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: 8,
-            fontSize: 11,
+            fontSize: 12.5,
             color: 'var(--text-secondary)',
           }}
         >
@@ -94,7 +98,6 @@ export function InteractTab({
         <div className="toggle-row">
           <div>
             <strong className="toggle-title">Thanh điều khiển nổi trên FB</strong>
-            <p className="toggle-desc">Hiện nút lướt và tương tác nhanh ở góc màn hình</p>
           </div>
           <label className="switch">
             <input
@@ -115,7 +118,7 @@ export function InteractTab({
             justifyContent: 'space-between',
           }}
         >
-          <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 600 }}>
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 600 }}>
             TỐC ĐỘ LƯỚT:
           </span>
           <div style={{ display: 'flex', gap: 4 }}>
@@ -143,7 +146,6 @@ export function InteractTab({
         <div className="toggle-row">
           <div>
             <strong className="toggle-title">Tự động Like &amp; Comment bài viết</strong>
-            <p className="toggle-desc">Tương tác tự động với mọi bài viết xuất hiện</p>
           </div>
           <label className="switch">
             <input
@@ -222,7 +224,7 @@ export function InteractTab({
             </label>
             <span
               style={{
-                fontSize: 10,
+                fontSize: 11.5,
                 color: 'var(--primary)',
                 fontWeight: 600,
                 background: '#eff6ff',
@@ -260,7 +262,9 @@ export function InteractTab({
               justifyContent: 'space-between',
             }}
           >
-            <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>Thứ tự chọn mẫu:</span>
+            <span style={{ fontSize: 12.5, fontWeight: 700, color: '#1e293b' }}>
+              Thứ tự chọn mẫu:
+            </span>
             <div className="custom-select" ref={modeMenuRef}>
               <button
                 type="button"
@@ -312,7 +316,7 @@ export function InteractTab({
         >
           <label
             htmlFor="numInteractionDelay"
-            style={{ fontSize: 11, color: 'var(--text-secondary)' }}
+            style={{ fontSize: 12.5, fontWeight: 700, color: '#1e293b' }}
           >
             Giãn cách (giây):
           </label>
@@ -322,12 +326,13 @@ export function InteractTab({
             min={2}
             max={120}
             className="interaction-number"
-            value={settings.interactionDelay}
-            onChange={(e) => {
-              const parsed = parseInt(e.target.value, 10) || 5;
-              onUpdateSettings({
-                interactionDelay: Math.max(2, Math.min(120, parsed)),
-              });
+            value={delayInput}
+            onChange={(e) => onDelayInputChange(e.target.value)}
+            onBlur={() => {
+              if (delayInput.trim() === '') return;
+              const parsed = parseInt(delayInput, 10);
+              const clamped = Number.isNaN(parsed) ? 5 : Math.max(2, Math.min(120, parsed));
+              onDelayInputChange(String(clamped));
             }}
           />
         </div>
@@ -338,7 +343,6 @@ export function InteractTab({
         <div className="toggle-row">
           <div>
             <strong className="toggle-title">💬 Tự động dán vào nhóm Messenger</strong>
-            <p className="toggle-desc">Tự động dán link và bấm gửi vào ô chat ở góc màn hình</p>
           </div>
           <label className="switch">
             <input
@@ -363,7 +367,7 @@ export function InteractTab({
               >
                 <label
                   htmlFor="txtMessengerGroupName"
-                  style={{ fontSize: 11, fontWeight: 700, color: '#1e293b' }}
+                  style={{ fontSize: 12.5, fontWeight: 700, color: '#1e293b' }}
                 >
                   📌 Tên nhóm Messenger nhận bài:
                 </label>
@@ -388,14 +392,14 @@ export function InteractTab({
               <label
                 htmlFor="txtMessengerCustomMsg"
                 style={{
-                  fontSize: 11,
+                  fontSize: 12.5,
                   fontWeight: 700,
                   color: '#1e293b',
-                  marginBottom: 3,
+                  marginBottom: 4,
                   display: 'block',
                 }}
               >
-                ✍️ Lời nhắn gửi kèm link (tùy chọn):
+                ✍️ Lời nhắn gửi kèm link:
               </label>
               <input
                 type="text"
@@ -420,7 +424,7 @@ export function InteractTab({
                 onChange={(e) => onUpdateSettings({ shareOnlyLeads: e.target.checked })}
               />
               <span>
-                <strong>Chỉ dán bài có SĐT:</strong> (Bỏ tích để dán tất cả bài đã tương tác)
+                <strong>Chỉ dán bài có SĐT</strong>
               </span>
             </label>
           </div>

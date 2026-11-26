@@ -67,6 +67,7 @@ export interface TabStatsResponse {
   likedCount?: number;
   commentedCount?: number;
   interactionDiagnostic?: string;
+  groupUrl?: string;
 }
 
 export const DEFAULT_SETTINGS: ExtensionSettings = {
